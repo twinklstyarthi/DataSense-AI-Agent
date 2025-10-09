@@ -2,11 +2,11 @@ import streamlit as st
 import pandas as pd
 import base64
 import time
-import os 
-from utils import load_sessions_list, get_image_download_link, get_chat_download_link
+import os
+from utils import start_new_chat, switch_chat, get_image_download_link, get_chat_download_link
 
 def display_chat_messages(messages, agent):
-    """Displays chat messages and handles UI interactions for charts and follow-up questions."""
+    """Displays chat messages and handles UI for follow-up questions."""
     for i, message in enumerate(messages):
         with st.chat_message(message["role"]):
             content = message["content"]
@@ -37,54 +37,49 @@ def display_chat_messages(messages, agent):
                 st.markdown("**Suggested Follow-ups:**")
                 cols = st.columns(min(len(content["follow_up_questions"]), 3))
                 for k, question in enumerate(content["follow_up_questions"]):
-                    if cols[k].button(question, key=f"follow_up_{i}_{k}_{question}"):
-                        st.session_state.messages.append({"role": "user", "content": question})
-                        with st.spinner("Thinking..."):
-                            response = agent.invoke_agent(question)
-                            st.session_state.messages.append({"role": "assistant", "content": response})
+                    if cols[k].button(question, key=f"follow_up_{i}_{k}_{st.session_state.current_chat_id}"):
+                        st.session_state.user_prompt_from_followup = question
                         st.rerun()
-
-
-def set_clear_session_flag():
-    """Callback to safely set the session clear flag."""
-    st.session_state.clear_session_request = True
-
-def set_session_to_load(session_file):
-    """Callback to safely set the session load flag."""
-    st.session_state.session_to_load = session_file
-
 
 def setup_sidebar():
     """Sets up the sidebar with session management and export buttons."""
     with st.sidebar:
         st.header("DataSense AI")
         st.markdown("Your intelligent data analysis partner.")
-
-       
-        st.button("➕ New Analysis", on_click=set_clear_session_flag)
-            
+        
+        st.button("➕ New Analysis", on_click=start_new_chat, use_container_width=True)
+        
         st.markdown("---")
 
-        saved_sessions = load_sessions_list()
-        if saved_sessions:
-            st.markdown("**Past Analyses** (Auto-Saved)")
-            for session_file in saved_sessions:
-                session_name = os.path.splitext(session_file)[0]
-                
-                st.button(
-                    f"Load '{session_name}'", 
-                    key=f"load_{session_name}",
-                    on_click=set_session_to_load,
-                    args=(session_file,)
-                )
+        # MODIFICATION: This now correctly reverses the list to show newest chats first.
+        sorted_chat_ids = list(st.session_state.chat_history.keys())[::-1]
+
+        if sorted_chat_ids:
+            st.markdown("**Past Analyses**")
+            for chat_id in sorted_chat_ids:
+                chat_data = st.session_state.chat_history[chat_id]
+                session_name = f"'{chat_data.get('df_name', 'Chat')}'"
+
+                if chat_id == st.session_state.current_chat_id:
+                    st.markdown(f'<p class="active-chat-item">{session_name}</p>', unsafe_allow_html=True)
+                else:
+                    st.button(
+                        session_name, 
+                        key=f"load_{chat_id}",
+                        on_click=switch_chat,
+                        args=(chat_id,),
+                        use_container_width=True
+                    )
         
         st.markdown("---")
         
-        last_fig_msg = next((msg for msg in reversed(st.session_state.messages) if isinstance(msg["content"], dict) and "plotly_fig" in msg["content"]), None)
+        active_chat = st.session_state.chat_history[st.session_state.current_chat_id]
+        
+        last_fig_msg = next((msg for msg in reversed(active_chat.get("messages", [])) if isinstance(msg["content"], dict) and "plotly_fig" in msg["content"]), None)
         if last_fig_msg:
             st.markdown("**Export Last Chart**")
             st.markdown(get_image_download_link(last_fig_msg["content"]["plotly_fig"], "chart.png"), unsafe_allow_html=True)
         
-        if st.session_state.messages:
+        if active_chat.get("messages", []):
             st.markdown("**Export Chat**")
-            st.markdown(get_chat_download_link(st.session_state.messages, "chat_history.html"), unsafe_allow_html=True)
+            st.markdown(get_chat_download_link(active_chat["messages"], "chat_history.html"), unsafe_allow_html=True)

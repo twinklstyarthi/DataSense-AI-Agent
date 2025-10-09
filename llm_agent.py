@@ -83,10 +83,10 @@ class AIAgent:
         try:
             final_state = self.graph.invoke(inputs, {"recursion_limit": 15})
             if final_state.get("error") and not final_state.get("final_response"):
-                 return {"response_text": f"I'm sorry, I was unable to complete your request. The final error was:\n\n`{final_state['error']}`"}
+                return {"response_text": f"I'm sorry, I was unable to complete your request. The final error was:\n\n`{final_state['error']}`"}
             return final_state.get("final_response", {"response_text": "Sorry, I couldn't process your request."})
         except Exception as e:
-             return {"response_text": f"An unexpected system error occurred: {str(e)}"}
+            return {"response_text": f"An unexpected system error occurred: {str(e)}"}
 
     def intent_router_node(self, state: AgentState) -> Dict[str, str]:
         prompt = f"""You are an expert intent router. Classify the user's intent into ONE of the following: 'bar_chart', 'histogram', 'dashboard', or 'code_generator'.
@@ -102,7 +102,7 @@ Respond with a single, valid JSON object with one key, "intent". Example: {{"int
 
     def decide_next_node(self, state: AgentState) -> str:
         return "tool_user" if state["intent"] in ["bar_chart", "histogram"] else "code_generator"
-    
+
     def decide_after_params(self, state: AgentState) -> str:
         return "fallback_to_code" if state.get("error") else "execute_tool"
 
@@ -149,26 +149,31 @@ Example: {{"intent": "code_generator", "user_prompt": "Calculate the average of 
     def code_generator_node(self, state: AgentState) -> Dict[str, str]:
         error_context = f"The previous attempt failed: --- {state['error']} ---. Please create a new, corrected response." if state.get("error") else ""
         if state['intent'] == 'dashboard':
-            prompt_template = f"""You are a world-class Data Analyst AI. Your task is to generate Python code that creates a comprehensive analysis and visualizations for a dashboard.
+            # --- THIS IS THE NEW, STRICTER PROMPT ---
+            prompt_template = f"""You are a world-class Data Analyst AI. Your task is to generate Python code that creates a comprehensive dashboard with multiple visualizations.
+
 **CRITICAL RULES:**
-1.  Your final output MUST be a Python dictionary assigned to a variable named `result`.
-2.  This dictionary can contain multiple keys. Some values can be pandas DataFrames (e.g., for summary statistics), and others MUST be Plotly Figure objects for charts.
-3.  **DO NOT** invent column names. Only use columns from the Data Summary.
-4.  **DO NOT** use `import` statements. `pandas as pd` and `plotly.express as px` are already available.
+1.  A "dashboard" is defined as a collection of **AT LEAST 3-4 DIVERSE VISUALIZATIONS.** Do not generate a single chart.
+2.  Your final output **MUST** be a Python dictionary assigned to a variable named `result`.
+3.  The dictionary **MUST** contain multiple keys, where each key is a descriptive string for a chart, and each value is a Plotly Figure object.
+4.  Analyze the data from different angles. Create a variety of charts (e.g., histograms for distributions, bar charts for categories, scatter plots for relationships).
+5.  **DO NOT** invent column names. Only use columns from the Data Summary.
+6.  **DO NOT** use `import` statements. `pandas as pd` and `plotly.express as px` are already available.
 
 **Data Summary:** ```{state['data_summary']}```
 {error_context}
 **User Prompt:** "{state['user_prompt']}"
 
-**Example of final code:**
+**Example of an EXCELLENT final code structure:**
 ```python
-summary_df = df.describe()
-fig1 = px.histogram(df, x='some_column')
-fig2 = px.scatter(df, x='another_column', y='some_other_column')
+fig1 = px.histogram(df, x='some_numeric_column', title='Distribution of [Column Name]')
+fig2 = px.bar(df, x='some_categorical_column', title='Count of [Column Name]')
+fig3 = px.scatter(df, x='column_a', y='column_b', title='[Column A] vs [Column B]')
+
 result = {{
-    "summary_stats": summary_df,
     "distribution_chart": fig1,
-    "correlation_chart": fig2
+    "category_count_chart": fig2,
+    "correlation_chart": fig3
 }}
 ```
 Now, write the Python code block to generate the dashboard components."""
@@ -199,17 +204,17 @@ Now, write the Python code block to generate the dashboard components."""
             return {"execution_result": local_scope.get('result'), "error": ""}
         except Exception as e:
             return {"error": f"Code execution failed: {str(e)}"}
-    
+
     def response_generator_node(self, state: AgentState) -> Dict[str, Dict]:
         result = state.get("execution_result")
         final_response = {}
 
-        
+
         if isinstance(result, list) and all('plotly.graph_objs._figure.Figure' in str(type(item)) for item in result):
             final_response["plotly_dashboard"] = result
             final_response["response_text"] = "I have generated the dashboard for you."
 
-        
+
         elif isinstance(result, dict):
             figures = [v for v in result.values() if 'plotly.graph_objs._figure.Figure' in str(type(v))]
             if figures:
@@ -226,7 +231,7 @@ Now, write the Python code block to generate the dashboard components."""
             else:
                 final_response["response_text"] = "Here is the analysis result:\n```\n" + json.dumps(result, indent=2) + "\n```"
 
-        
+
         elif 'plotly.graph_objs._figure.Figure' in str(type(result)):
             final_response["plotly_fig"] = result
             final_response["response_text"] = "Here is the chart you requested."
@@ -237,8 +242,8 @@ Now, write the Python code block to generate the dashboard components."""
             final_response["response_text"] = str(result)
         else:
             final_response["response_text"] = "I have processed your request, but there was no specific output to display."
-        
-        
+
+
         try:
             suggester_llm = self.llm.bind_tools(tools=[FollowUp])
             prompt = f"""Generate 2-3 concise follow-up questions. Data Summary: {self.data_summary}. User's last prompt: "{state['user_prompt']}". Generated Answer: {final_response.get("response_text", "A chart or data was generated.")}"""
@@ -247,7 +252,14 @@ Now, write the Python code block to generate the dashboard components."""
                 final_response["follow_up_questions"] = response.tool_calls[0]['args'].get('questions', [])
             else: final_response["follow_up_questions"] = []
         except Exception:
-            final_response["follow_up_questions"] = [] 
+            final_response["follow_up_questions"] = []
 
         return {"final_response": final_response}
+
+
+
+
+
+
+
 

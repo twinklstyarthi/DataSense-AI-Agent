@@ -8,12 +8,11 @@ import sys
 import atexit
 import tempfile
 import os
-import platform
 import time
 import socket
-from datetime import datetime
 
-from utils import initialize_session_state, load_css, auto_save_session, load_selected_session
+# Import NEW session management functions
+from utils import initialize_session_state, load_css, get_active_chat_state, create_chat_for_new_upload
 from data_handler import load_data, get_data_quality_report, get_data_summary
 from ui_components import display_chat_messages, setup_sidebar
 from llm_agent import AIAgent
@@ -25,117 +24,92 @@ st.set_page_config(
     layout="wide"
 )
 
-if st.session_state.get("clear_session_request"):
-    st.session_state.clear()
-    st.session_state.clear_session_request = False 
-    st.rerun()
-
-if st.session_state.get("session_to_load"):
-    session_file = st.session_state.session_to_load
-    saved_state = load_selected_session(session_file)
-    st.session_state.clear()
-    for key, value in saved_state.items():
-        st.session_state[key] = value
-    
-    initialize_session_state() 
-    st.session_state.session_to_load = None 
-    st.rerun()
-
-
+# Initialize the multi-chat session state
 initialize_session_state()
 load_css("styles.css")
 setup_sidebar()
 
+# Get the state of the currently active chat
+active_chat = get_active_chat_state()
 
 def initialize_agent(df):
-    """Initializes and returns the AI agent."""
+    """Initializes and returns the AI agent for the active chat."""
     if df is None: return None
     
-    if 'agent' not in st.session_state or st.session_state.agent is None:
-        st.session_state.data_summary = get_data_summary(df)
-        st.session_state.agent = AIAgent(df=df, data_summary=st.session_state.data_summary)
-    return st.session_state.agent
+    # Agent is now stored within the active chat's state
+    if 'agent' not in active_chat or active_chat['agent'] is None:
+        active_chat['data_summary'] = get_data_summary(df)
+        active_chat['agent'] = AIAgent(df=df, data_summary=active_chat['data_summary'])
+    return active_chat['agent']
 
-#Process Management
+# Process Management for D-Tale
 def cleanup_temp_files():
-    if 'dtale_temp_csv_file' in st.session_state and st.session_state.dtale_temp_csv_file and os.path.exists(st.session_state.dtale_temp_csv_file):
-        os.remove(st.session_state.dtale_temp_csv_file)
-    if 'dtale_temp_script_file' in st.session_state and st.session_state.dtale_temp_script_file and os.path.exists(st.session_state.dtale_temp_script_file):
-        os.remove(st.session_state.dtale_temp_script_file)
+    if active_chat and 'dtale_temp_csv_file' in active_chat and active_chat['dtale_temp_csv_file'] and os.path.exists(active_chat['dtale_temp_csv_file']):
+        os.remove(active_chat['dtale_temp_csv_file'])
+    if active_chat and 'dtale_temp_script_file' in active_chat and active_chat['dtale_temp_script_file'] and os.path.exists(active_chat['dtale_temp_script_file']):
+        os.remove(active_chat['dtale_temp_script_file'])
 
-def kill_dtale_process():
-    if 'dtale_process' in st.session_state and st.session_state.dtale_process:
-        if st.session_state.dtale_process.poll() is None:
-            st.session_state.dtale_process.terminate()
-        st.session_state.dtale_process = None
-    cleanup_temp_files()
+def kill_all_dtale_processes():
+    if "chat_history" in st.session_state:
+        for chat_id, chat_data in st.session_state.chat_history.items():
+            if 'dtale_process' in chat_data and chat_data['dtale_process']:
+                if chat_data['dtale_process'].poll() is None:
+                    chat_data['dtale_process'].terminate()
+                chat_data['dtale_process'] = None
 
-atexit.register(kill_dtale_process)
+atexit.register(kill_all_dtale_processes)
 
-#Main App Logic
+# Main App Logic
 st.title("🤖 DataSense AI")
 st.markdown("Upload your data and start a conversation. Ask questions, request charts, and build dashboards.")
 
-#File Uploader
-if st.session_state.df is None:
+# Central variable for user input to handle both chat_input and follow-ups
+user_prompt = None
+if "user_prompt_from_followup" in st.session_state and st.session_state.user_prompt_from_followup:
+    user_prompt = st.session_state.user_prompt_from_followup
+    st.session_state.user_prompt_from_followup = None
+else:
+    user_prompt = st.chat_input("Ask DataSense AI...")
+
+# File Uploader is only shown for chats that don't have a DataFrame yet.
+if active_chat['df'] is None:
     uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=["csv", "xls", "xlsx"])
     if uploaded_file is not None:
         with st.spinner("Loading and analyzing data..."):
-            st.session_state.clear()
-            initialize_session_state()
-            st.session_state.df = load_data(uploaded_file)
-            st.session_state.df_name = uploaded_file.name
-            
-            if st.session_state.df is not None:
-                
-                safe_name = "".join(c for c in st.session_state.df_name if c.isalnum() or c in (' ', '.', '_')).rstrip()
-                st.session_state.session_id = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{safe_name}"
-
-                report = get_data_quality_report(st.session_state.df)
-                st.session_state.messages.append({"role": "assistant", "content": {"response_text": report}})
-                
-                
-                auto_save_session()
-                st.rerun()
+            df = load_data(uploaded_file)
+            if df is not None:
+                report = get_data_quality_report(df)
+                create_chat_for_new_upload(df, uploaded_file.name, report)
 else:
-    st.info(f"**Dataset Loaded:** `{st.session_state.df_name}` ({st.session_state.df.shape[0]} rows, {st.session_state.df.shape[1]} columns)")
+    st.info(f"**Dataset Loaded:** `{active_chat['df_name']}` ({active_chat['df'].shape[0]} rows, {active_chat['df'].shape[1]} columns)")
 
-#Main Content Tabs
-if st.session_state.df is not None:
-    agent = initialize_agent(st.session_state.df)
+# Main Content Tabs
+if active_chat['df'] is not None:
+    agent = initialize_agent(active_chat['df'])
     tab1, tab2, tab3 = st.tabs(["💬 Chat", "🗂️ Data View & Analysis", "📊 Dashboard"])
 
     with tab1:
         st.header("Conversational Analysis")
-        display_chat_messages(st.session_state.messages, agent)
-        prompt = st.chat_input("Ask DataSense AI...")
-        if prompt:
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.spinner("Thinking..."):
-                response = agent.invoke_agent(prompt)
-                st.session_state.messages.append({"role": "assistant", "content": response})
-                
-                auto_save_session()
-            st.rerun()
+        display_chat_messages(active_chat['messages'], agent)
 
     with tab2:
         st.header("Data Preview")
-        st.dataframe(st.session_state.df.head(20))
+        st.dataframe(active_chat['df'].head(20))
         st.header("Interactive Analysis")
-        DTALE_PORT = 40000
+        DTALE_PORT = 40000 
         dtale_url = f"http://127.0.0.1:{DTALE_PORT}"
-        if st.session_state.get('dtale_process') is None:
+        
+        if active_chat.get('dtale_process') is None:
             if st.button("🚀 Launch Interactive Analysis"):
                 with st.spinner('Starting D-Tale...'):
-                    
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv", mode='w', newline='') as tmp_csv:
-                        st.session_state.df.to_csv(tmp_csv.name, index=False)
-                        st.session_state.dtale_temp_csv_file = tmp_csv.name
+                        active_chat['df'].to_csv(tmp_csv.name, index=False)
+                        active_chat['dtale_temp_csv_file'] = tmp_csv.name
                     script_content = f"""
 import dtale, pandas as pd, sys, time
 try:
     port = {DTALE_PORT}
-    csv_path = r'{st.session_state.dtale_temp_csv_file}'
+    csv_path = r'{active_chat['dtale_temp_csv_file']}'
     df = pd.read_csv(csv_path)
     dtale.show(df, port=port, open_browser=False, host='127.0.0.1', app_root='/', reaper_on=False)
     while True: time.sleep(1)
@@ -143,10 +117,11 @@ except KeyboardInterrupt: sys.exit(0)
 """
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".py", mode='w') as tmp_script:
                         tmp_script.write(script_content)
-                        st.session_state.dtale_temp_script_file = tmp_script.name
-                    command = [sys.executable, st.session_state.dtale_temp_script_file]
+                        active_chat['dtale_temp_script_file'] = tmp_script.name
+                    command = [sys.executable, active_chat['dtale_temp_script_file']]
                     process = subprocess.Popen(command)
-                    st.session_state.dtale_process = process
+                    active_chat['dtale_process'] = process
+                    
                     is_ready = False
                     start_time = time.time()
                     with st.spinner("Waiting for Interactive Analysis to initialize..."):
@@ -160,60 +135,50 @@ except KeyboardInterrupt: sys.exit(0)
                     if is_ready:
                         st.rerun()
                     else:
-                        kill_dtale_process()
+                        proc = active_chat.get('dtale_process')
+                        if proc and proc.poll() is None: proc.terminate()
+                        active_chat['dtale_process'] = None
+                        cleanup_temp_files()
                         st.error("Failed to start the interactive analysis tool within the time limit.")
         else:
             st.success(f"Interactive analysis is running! [Click here]({dtale_url})")
             if st.button("❌ Terminate Interactive Analysis"):
-                kill_dtale_process()
+                proc = active_chat.get('dtale_process')
+                if proc and proc.poll() is None: proc.terminate()
+                active_chat['dtale_process'] = None
+                cleanup_temp_files()
                 st.rerun()
 
     with tab3:
         st.header("Automated Dashboards")
-        col1, col2, col3, col4 = st.columns(4)
+        
+        col1, _, _, _ = st.columns(4)
         with col1:
             if st.button("Generate Comprehensive Dashboard", use_container_width=True):
-                dashboard_prompt = "Generate a comprehensive dashboard."
                 with st.spinner("Building your dashboard..."):
-                    response = agent.invoke_agent(dashboard_prompt)
-                    st.session_state.dashboard_figures = response.get("plotly_dashboard")
-                    if st.session_state.dashboard_figures:
-                        
-                        auto_save_session()
-                    else:
+                    response = agent.invoke_agent("Generate a comprehensive dashboard.")
+                    active_chat['dashboard_figures'] = response.get("plotly_dashboard")
+                    if not active_chat['dashboard_figures']:
                         st.error(response.get("response_text", "Sorry, the dashboard could not be generated."))
-                st.rerun()
-        
-        numeric_cols = st.session_state.df.select_dtypes(include=['number']).columns.tolist()
-        categorical_cols = st.session_state.df.select_dtypes(include=['object', 'category']).columns.tolist()
-
-        suggestions = []
-        if len(numeric_cols) > 1: suggestions.append(f"Dashboard of {numeric_cols[0]} vs {numeric_cols[1]}")
-        if categorical_cols: suggestions.append(f"Dashboard about {categorical_cols[0]}")
-        if numeric_cols and categorical_cols: suggestions.append(f"Dashboard of {numeric_cols[0]} by {categorical_cols[0]}")
-        
-        button_cols = [col2, col3, col4]
-        for i, suggestion in enumerate(suggestions[:3]):
-            with button_cols[i]:
-                if st.button(suggestion, use_container_width=True, key=f"dash_sug_{i}"):
-                    with st.spinner(f"Building dashboard for '{suggestion}'..."):
-                        response = agent.invoke_agent(suggestion)
-                        st.session_state.dashboard_figures = response.get("plotly_dashboard")
-                        if st.session_state.dashboard_figures:
-                            
-                            auto_save_session()
-                        else:
-                            st.error(response.get("response_text", "Sorry, that dashboard could not be generated."))
-                    st.rerun()
+                # --- THIS IS THE FIX ---
+                # The st.rerun() command was removed from here.
+                # Streamlit will automatically rerun after the button logic finishes.
 
         st.markdown("---")
-        if st.session_state.get('dashboard_figures'):
+        if active_chat.get('dashboard_figures'):
             st.subheader("Your Generated Dashboard")
-            dashboard_figs = st.session_state.dashboard_figures
+            dashboard_figs = active_chat['dashboard_figures']
             if dashboard_figs and isinstance(dashboard_figs, list):
                 cols = st.columns(2)
                 for i, fig in enumerate(dashboard_figs):
-                    if fig:
-                        cols[i % 2].plotly_chart(fig, use_container_width=True)
+                    if fig: cols[i % 2].plotly_chart(fig, use_container_width=True)
             else:
                 st.warning("The AI did not generate a valid list of figures for the dashboard.")
+
+# Process user input
+if user_prompt and agent:
+    active_chat['messages'].append({"role": "user", "content": user_prompt})
+    with st.spinner("Thinking..."):
+        response = agent.invoke_agent(user_prompt)
+        active_chat['messages'].append({"role": "assistant", "content": response})
+    st.rerun()

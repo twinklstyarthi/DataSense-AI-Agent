@@ -38,6 +38,19 @@ h1, h2, h3 {
     background-color: #7324bf; /* Slightly darker purple on click */
 }
 
+/* MODIFIED --- Style for the active chat item in the sidebar */
+.active-chat-item {
+    background-color: #7324bf; /* Restored the solid purple background */
+    color: #FFFFFF;
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid #FFFFFF;
+    text-align: center;
+    font-size: 14px;
+    margin-bottom: 8px; /* This adds the space you wanted */
+}
+
+
 /* Card-based Chat Message Styling */
 .chat-card {
     background-color: #FFFFFF;
