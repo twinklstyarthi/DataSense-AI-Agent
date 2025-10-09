@@ -51,7 +51,7 @@ def setup_sidebar():
         
         st.markdown("---")
 
-        # MODIFICATION: This now correctly reverses the list to show newest chats first.
+        
         sorted_chat_ids = list(st.session_state.chat_history.keys())[::-1]
 
         if sorted_chat_ids:

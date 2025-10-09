@@ -1,13 +1,13 @@
-# Virtual Environment
+#Virtual Environment
 venv/
 
-# Python cache
+#Python cache
 __pycache__/
 
-# Environment variables and secrets
+#Environment variables and secrets
 .env
 
-# Session folders 
+#Session folders 
 sessions/
 
 

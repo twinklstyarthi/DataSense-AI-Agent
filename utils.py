@@ -39,14 +39,12 @@ def start_new_chat():
         "dtale_temp_csv_file": None, "dtale_temp_script_file": None,
     }
     st.session_state.current_chat_id = new_chat_id
-    # st.rerun() was removed from here. It's not needed in a callback.
-
+    
 def switch_chat(chat_id: str):
     """Switches the active chat to the given chat_id."""
     if chat_id in st.session_state.chat_history:
         st.session_state.current_chat_id = chat_id
-    # st.rerun() was removed from here. It's not needed in a callback.
-
+    
 def create_chat_for_new_upload(df, df_name, report):
     """
     Creates a new chat for an uploaded file, or repurposes the current
@@ -71,7 +69,7 @@ def create_chat_for_new_upload(df, df_name, report):
         }
         st.session_state.current_chat_id = new_chat_id
     
-    st.rerun() # This one is KEPT because it's not in a callback.
+    st.rerun() 
 
 
 def load_css(file_name):

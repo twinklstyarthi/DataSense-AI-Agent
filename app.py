@@ -10,8 +10,6 @@ import tempfile
 import os
 import time
 import socket
-
-# Import NEW session management functions
 from utils import initialize_session_state, load_css, get_active_chat_state, create_chat_for_new_upload
 from data_handler import load_data, get_data_quality_report, get_data_summary
 from ui_components import display_chat_messages, setup_sidebar
@@ -24,25 +22,20 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize the multi-chat session state
 initialize_session_state()
 load_css("styles.css")
 setup_sidebar()
-
-# Get the state of the currently active chat
 active_chat = get_active_chat_state()
 
 def initialize_agent(df):
     """Initializes and returns the AI agent for the active chat."""
     if df is None: return None
-    
-    # Agent is now stored within the active chat's state
     if 'agent' not in active_chat or active_chat['agent'] is None:
         active_chat['data_summary'] = get_data_summary(df)
         active_chat['agent'] = AIAgent(df=df, data_summary=active_chat['data_summary'])
     return active_chat['agent']
 
-# Process Management for D-Tale
+#Process Management for D-Tale
 def cleanup_temp_files():
     if active_chat and 'dtale_temp_csv_file' in active_chat and active_chat['dtale_temp_csv_file'] and os.path.exists(active_chat['dtale_temp_csv_file']):
         os.remove(active_chat['dtale_temp_csv_file'])
@@ -59,11 +52,9 @@ def kill_all_dtale_processes():
 
 atexit.register(kill_all_dtale_processes)
 
-# Main App Logic
+#Main App Logic
 st.title("🤖 DataSense AI")
 st.markdown("Upload your data and start a conversation. Ask questions, request charts, and build dashboards.")
-
-# Central variable for user input to handle both chat_input and follow-ups
 user_prompt = None
 if "user_prompt_from_followup" in st.session_state and st.session_state.user_prompt_from_followup:
     user_prompt = st.session_state.user_prompt_from_followup
@@ -71,7 +62,7 @@ if "user_prompt_from_followup" in st.session_state and st.session_state.user_pro
 else:
     user_prompt = st.chat_input("Ask DataSense AI...")
 
-# File Uploader is only shown for chats that don't have a DataFrame yet.
+
 if active_chat['df'] is None:
     uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=["csv", "xls", "xlsx"])
     if uploaded_file is not None:
@@ -160,10 +151,7 @@ except KeyboardInterrupt: sys.exit(0)
                     active_chat['dashboard_figures'] = response.get("plotly_dashboard")
                     if not active_chat['dashboard_figures']:
                         st.error(response.get("response_text", "Sorry, the dashboard could not be generated."))
-                # --- THIS IS THE FIX ---
-                # The st.rerun() command was removed from here.
-                # Streamlit will automatically rerun after the button logic finishes.
-
+                
         st.markdown("---")
         if active_chat.get('dashboard_figures'):
             st.subheader("Your Generated Dashboard")
